@@ -1,0 +1,157 @@
+Param a_zero_x(2, min=1, max=100);          // crossings A plays before switching
+Param b_zero_x(2, min=1, max=100);          // crossings B plays before switching
+Param win_ms(20, min=1, max=100);           // how far back to look for a matching crossing
+Param a_repeats(0, min=0, max=1000);        // extra times A's segment repeats before handing off
+Param b_repeats(0, min=0, max=1000);        // extra times B's segment repeats before handing off
+
+Data buf(8192, 2);                          // memory window: ch 0 = A, ch 1 = B
+Data seg(262144);                           // loop buffer (about 5.9 s at 44.1 kHz)
+History wp(0), rp(0), rn(0), pv(0), cur(0), zcount(0), pol(1);
+History sd(0), rd(0), ph(0), ov(0);         // ph: 0 = playing live, 1 = replaying the loop; rd = repeats done
+History clen(0), cz(0), cpv(0), cdone(0), lz(-1);   // loop capture: length, crossings, previous sample, done, last crossing index
+
+N = 8192;                                   // must match the Data buf size above
+SN = 262144;                                // must match the Data seg size above
+ZMAX = 100;                                 // loop buffer keeps this many crossings (= max of a_zero_x / b_zero_x)
+lim = min(floor(mstosamps(win_ms)), N - 16);
+
+// always record both inputs
+poke(buf, in1, wp, 0);
+poke(buf, in2, wp, 1);
+
+// the playing source's stream (constant delay behind live), and the sample actually played
+xc = peek(buf, rp, cur);
+x = xc;
+if (ph == 1) { x = peek(seg, rn); }
+
+// ---- keep copying the stream into the loop buffer, past the end of the segment,
+//      until it holds ZMAX crossings or is full
+nclen = clen;
+ncz = cz;
+ncpv = cpv;
+ncdone = cdone;
+nlz = lz;
+nov = ov;
+if (cdone == 0) {
+    cr = (cpv < 0 && xc >= 0) || (cpv >= 0 && xc < 0);
+    poke(seg, xc, clen);
+    if (cr) { ncz = cz + 1; nlz = clen; }
+    ncpv = xc;
+    nclen = clen + 1;
+    if (ncz >= ZMAX || nclen >= SN) { ncdone = 1; }
+}
+
+// ---- zero crossing of the played signal
+rise = (pv < 0 && x >= 0);
+fall = (pv >= 0 && x < 0);
+zc = rise || fall;
+dr = rise ? 1 : -1;
+
+z = zcount;
+cut = 0;
+if (zc) {
+    tz = (cur == 0) ? a_zero_x : b_zero_x;  // the count is read only at a zero crossing
+    z += 1;
+    if (z >= tz) { cut = 1; }
+}
+if (ph == 1 && ncdone == 1 && rn >= nlz) { cut = 1; }   // reached the end of what was stored
+if (ph == 0 && ncdone == 1 && cut == 0) { nov = 1; }    // segment too long to store: it won't repeat
+
+// default: keep playing
+y = pol * x;
+npv = x;
+nrp = (rp + 1) % N;
+nrn = rn + 1;
+ncur = cur;
+nz = z;
+npol = pol;
+nsd = sd;
+nrd = rd;
+nph = ph;
+
+if (cut) {
+    nld = pol * dr;                         // direction the output is travelling through zero here
+    reps = (cur == 0) ? a_repeats : b_repeats;   // the repeat count is read only at a loop end (a zero crossing)
+
+    if (rd < reps && sd != 0 && ov == 0) {
+        // ---------- REPEAT: replay the loop, the other source stays silent
+        npol = nld * sd;                    // flip if the end direction differs from the start direction
+        ys = peek(seg, 0);
+        y = npol * ys;
+        npv = ys;
+        nrn = 1;
+        nph = 1;
+        nz = 0;
+        nrd = rd + 1;
+    } else {
+        // ---------- HAND OFF to the other source
+        other = 1 - cur;
+        idx = -1;
+        idx2 = -1;
+        d2 = 0;
+        v1 = peek(buf, wp, other);
+        for (k = 0; k < lim; k += 1) {
+            j = (wp - k - 1 + N) % N;
+            v0 = peek(buf, j, other);
+            if ((v0 < 0 && v1 >= 0) || (v0 >= 0 && v1 < 0)) {
+                dd = (v1 >= 0) ? 1 : -1;
+                ps = (wp - k + N) % N;
+                if (idx2 < 0) { idx2 = ps; d2 = dd; }
+                if (dd == nld) { idx = ps; break; }
+            }
+            v1 = v0;
+        }
+
+        si = wp;                            // last resort: newest sample
+        spol = 1;
+        ssd = 0;                            // 0 = no known start direction, so no repeats
+        if (idx >= 0) {
+            si = idx;
+            ssd = nld;
+        } else if (idx2 >= 0) {
+            si = idx2;
+            spol = nld * d2;
+            ssd = d2;
+        }
+
+        ys = peek(buf, si, other);
+        y = spol * ys;
+        npv = ys;
+        nrp = (si + 1) % N;
+        ncur = other;
+        npol = spol;
+        nz = 0;
+        nsd = ssd;
+        nrd = 0;
+
+        // the new segment starts here: restart the loop capture
+        poke(seg, ys, 0);
+        nclen = 1;
+        ncz = 0;
+        ncpv = ys;
+        ncdone = 0;
+        nlz = -1;
+        nov = 0;
+        nph = 0;
+        nrn = 0;
+    }
+}
+
+rp = nrp;
+rn = nrn;
+pv = npv;
+cur = ncur;
+zcount = nz;
+pol = npol;
+sd = nsd;
+rd = nrd;
+ph = nph;
+ov = nov;
+clen = nclen;
+cz = ncz;
+cpv = ncpv;
+cdone = ncdone;
+lz = nlz;
+wp = (wp + 1) % N;
+
+out1 = y;
