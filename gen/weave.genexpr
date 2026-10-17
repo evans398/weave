@@ -113,9 +113,6 @@ if (cut) {
         idx = -1;
         idx2 = -1;
         d2 = 0;
-        osl = abs(x - pv);                  // slope the output is leaving with
-        if (ph == 1 && rv == 1) { osl = abs(pv - peek(seg, 1)); }
-        best = 1000000000;
         v1 = peek(buf, wp, other);
         for (k = 0; k < lim; k += 1) {
             j = (wp - k - 1 + N) % N;
@@ -124,10 +121,7 @@ if (cut) {
                 dd = (v1 >= 0) ? 1 : -1;
                 ps = (wp - k + N) % N;
                 if (idx2 < 0) { idx2 = ps; d2 = dd; }
-                if (dd == nld) {
-                    cs = abs(abs(v1 - v0) - osl);       // how far this crossing's slope is from ours
-                    if (cs < best) { best = cs; idx = ps; }   // ties keep the newest
-                }
+                if (dd == nld) { idx = ps; break; }
             }
             v1 = v0;
         }

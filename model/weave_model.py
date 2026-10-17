@@ -10,7 +10,7 @@ import numpy as np
 
 sr = 44100
 
-def run_v2(a, b, zA=2, zB=2, repA=0, repB=0, revA=0, revB=0, changes=(), win_ms=20, N=8192, SN=262144, ZMAX=100, slope_match=True):
+def run_v2(a, b, zA=2, zB=2, repA=0, repB=0, revA=0, revB=0, changes=(), win_ms=20, N=8192, SN=262144, ZMAX=100):
     """Line-for-line model of the new gen~ code: continuous loop capture, params read only at crossings."""
     P = dict(zA=zA, zB=zB, repA=repA, repB=repB, revA=revA, revB=revB)
     ch = sorted(changes); ci = 0
@@ -78,9 +78,6 @@ def run_v2(a, b, zA=2, zB=2, repA=0, repB=0, revA=0, revB=0, changes=(), win_ms=
             else:
                 other = 1 - cur
                 idx = -1; idx2 = -1; d2 = 0
-                osl = abs(x - pv)                                  # slope the output is leaving with
-                if ph == 1 and rv == 1: osl = abs(pv - seg[1])
-                best = 1e9
                 v1 = buf[wp, other]
                 for k in range(lim):
                     j = (wp - k - 1 + N) % N
@@ -89,10 +86,7 @@ def run_v2(a, b, zA=2, zB=2, repA=0, repB=0, revA=0, revB=0, changes=(), win_ms=
                         dd = 1 if v1 >= 0 else -1
                         ps = (wp - k + N) % N
                         if idx2 < 0: idx2 = ps; d2 = dd
-                        if dd == nld:
-                            if not slope_match: idx = ps; break
-                            cs = abs(abs(v1 - v0) - osl)              # how far this crossing's slope is from ours
-                            if cs < best: best = cs; idx = ps         # ties keep the newest
+                        if dd == nld: idx = ps; break
                     v1 = v0
                 si = wp; spol = 1.0; ssd = 0
                 if idx >= 0: si = idx; ssd = nld
