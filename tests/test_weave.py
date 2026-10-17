@@ -124,6 +124,54 @@ def test_silent_and_dc_second_source():
         assert np.all(np.isfinite(out))
 
 
+def test_reverse_every_second_repeat():
+    out, ev = run_v2(A, B, zA=5, zB=2, repA=6, repB=0, revA=1)
+    assert join_ok(out, ev)[0] == join_ok(out, ev)[1]
+    c = [c for c in chains(ev) if c["cur"] == 0 and len(c["cuts"]) == 8][0]
+    assert c["rvs"] == [0, 1, 0, 1, 0, 1, 0]          # play, then reversed, forward, reversed, ...
+    assert check_chain(out, c, A, B) == 0
+
+
+def test_reverse_off_changes_nothing():
+    o1, _ = run_v2(A, B, zA=5, zB=3, repA=4, repB=4)
+    o2, e2 = run_v2(A, B, zA=5, zB=3, repA=4, repB=4, revA=0, revB=0)
+    assert np.array_equal(o1, o2) and all(e["rv"] == 0 for e in e2)
+
+
+def test_reverse_per_source():
+    out, ev = run_v2(A, B, zA=4, zB=4, repA=4, repB=4, revA=1, revB=0)
+    assert any(e["rv"] for e in ev if e["cur"] == 0) and not any(e["rv"] for e in ev if e["cur"] == 1)
+    out, ev = run_v2(A, B, zA=4, zB=4, repA=4, repB=4, revA=0, revB=1)
+    assert any(e["rv"] for e in ev if e["cur"] == 1) and not any(e["rv"] for e in ev if e["cur"] == 0)
+    assert join_ok(out, ev)[0] == join_ok(out, ev)[1]
+
+
+def test_reverse_toggle_and_zx_change_mid_repeat():
+    cs = _baseline(30, 20)
+    for chg in ([("revA", 1)], [("zA", 7)], [("zA", 7), ("revA", 1)], [("revA", 1), ("zA", 40)]):
+        k = 3
+        m = (cs["cuts"][k] + cs["cuts"][k + 1]) // 2
+        out, ev = run_v2(A, B, zA=20, zB=2, repA=30, repB=0,
+                         changes=[(m + j * 17, n, v) for j, (n, v) in enumerate(chg)])
+        assert join_ok(out, ev)[0] == join_ok(out, ev)[1]
+        assert sum(check_chain(out, c, A, B) for c in chains(ev)) == 0
+
+
+def test_reverse_fuzz():
+    rng = np.random.default_rng(5)
+    nz = [0.4 * rng.standard_normal(len(T)) for _ in range(2)]
+    for x, y in [(A, B), (nz[0], nz[1])]:
+        changes = [(int(rng.integers(1000, len(x) - 1000)),
+                    str(rng.choice(["zA", "zB", "repA", "repB", "revA", "revB"])), int(rng.integers(0, 40)))
+                   for _ in range(25)]
+        out, ev = run_v2(x, y, zA=int(rng.integers(1, 30)), zB=int(rng.integers(1, 30)),
+                         repA=int(rng.integers(0, 20)), repB=int(rng.integers(0, 20)),
+                         revA=1, revB=1, changes=changes)
+        assert np.all(np.isfinite(out))
+        assert join_ok(out, ev)[0] == join_ok(out, ev)[1]
+        assert sum(check_chain(out, c, x, y) for c in chains(ev)) == 0
+
+
 if __name__ == "__main__":
     failed = 0
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
