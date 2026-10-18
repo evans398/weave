@@ -1,0 +1,197 @@
+Param a_start(0, min=0);                    // selection start in buffer a, in samples (waveform~ 3rd outlet, unit samples)
+Param a_end(0, min=0);                      // selection end in buffer a, in samples (waveform~ 4th outlet)
+Param b_start(0, min=0);                    // selection start in buffer b
+Param b_end(0, min=0);                      // selection end in buffer b
+Param a_zero_x(2, min=1, max=100);          // crossings A plays per turn (2 = one waveset)
+Param b_zero_x(2, min=1, max=100);          // crossings B plays per turn
+Param loop_on(0, min=0, max=1);             // 0 = one-shot, 1 = both ranges loop (read when play starts)
+Param play_on(0, min=0, max=1);             // 1 = play, 0 = stop at the next zero crossing
+
+Buffer srcA("a");                           // a buffer~ named a
+Buffer srcB("b");                           // a buffer~ named b
+History running(0), pplay(0), cur(0), pol(1), pv(0), hpv(0), zcount(0), kA(0), kB(0), lp(0);
+History s0A(0), e0A(0), okA(0), s0B(0), e0B(0), okB(0);   // snapped range of each source and whether it is usable
+
+SCAN = 100000;                              // how far (in samples) to look for a crossing when snapping
+
+chn = mc_channel - 1;                       // this instance's channel, counted from 0
+chA = min(chn, channels(srcA) - 1);         // a mono buffer feeds every channel
+chB = min(chn, channels(srcB) - 1);
+nA = dim(srcA);
+nB = dim(srcB);
+
+// work on local copies of the state, and write them back at the end
+vrun = running;
+vcur = cur;
+vpol = pol;
+vpv = pv;
+vhpv = hpv;
+vz = zcount;
+vkA = kA;
+vkB = kB;
+vlp = lp;
+vs0A = s0A;
+ve0A = e0A;
+vokA = okA;
+vs0B = s0B;
+ve0B = e0B;
+vokB = okB;
+
+// ---- play switched on: snap both ranges to zero crossings
+if (play_on >= 1 && pplay < 1) {
+    vlp = loop_on;
+    for (w = 0; w < 2; w += 1) {
+        n = (w == 0) ? nA : nB;
+        sel1 = (w == 0) ? a_start : b_start;
+        sel2 = (w == 0) ? a_end : b_end;
+
+        // start: the nearest crossing (a tie keeps the earlier one)
+        s = -1;
+        for (m = 0; m < SCAN; m += 1) {
+            i = sel1 - m;
+            if (i >= 1 && i < n) {
+                xi = (w == 0) ? peek(srcA, i, chA) : peek(srcB, i, chB);
+                xp = (w == 0) ? peek(srcA, i - 1, chA) : peek(srcB, i - 1, chB);
+                if ((xp < 0 && xi >= 0) || (xp >= 0 && xi < 0)) { s = i; break; }
+            }
+            i = sel1 + m;
+            if (m > 0 && i >= 1 && i < n) {
+                xi = (w == 0) ? peek(srcA, i, chA) : peek(srcB, i, chB);
+                xp = (w == 0) ? peek(srcA, i - 1, chA) : peek(srcB, i - 1, chB);
+                if ((xp < 0 && xi >= 0) || (xp >= 0 && xi < 0)) { s = i; break; }
+            }
+        }
+
+        // end: the nearest crossing after the start that travels the same way as the start
+        e = -1;
+        if (s >= 0) {
+            xs = (w == 0) ? peek(srcA, s, chA) : peek(srcB, s, chB);
+            d0 = (xs >= 0) ? 1 : -1;
+            for (m = 0; m < SCAN; m += 1) {
+                i = sel2 - m;
+                if (i > s && i < n) {
+                    xi = (w == 0) ? peek(srcA, i, chA) : peek(srcB, i, chB);
+                    xp = (w == 0) ? peek(srcA, i - 1, chA) : peek(srcB, i - 1, chB);
+                    di = (xi >= 0) ? 1 : -1;
+                    if (((xp < 0 && xi >= 0) || (xp >= 0 && xi < 0)) && di == d0) { e = i; break; }
+                }
+                i = sel2 + m;
+                if (m > 0 && i > s && i < n) {
+                    xi = (w == 0) ? peek(srcA, i, chA) : peek(srcB, i, chB);
+                    xp = (w == 0) ? peek(srcA, i - 1, chA) : peek(srcB, i - 1, chB);
+                    di = (xi >= 0) ? 1 : -1;
+                    if (((xp < 0 && xi >= 0) || (xp >= 0 && xi < 0)) && di == d0) { e = i; break; }
+                }
+            }
+        }
+
+        if (w == 0) {
+            vs0A = s;
+            ve0A = e;
+            vokA = (s >= 0 && e >= 0) ? 1 : 0;
+        } else {
+            vs0B = s;
+            ve0B = e;
+            vokB = (s >= 0 && e >= 0) ? 1 : 0;
+        }
+    }
+    vkA = 0;
+    vkB = 0;
+    vz = 0;
+    vhpv = 0;
+    vpol = 1;
+    vcur = (vokA == 1) ? 0 : 1;             // A goes first when it has a usable range
+    vrun = (vokA == 1 || vokB == 1) ? 1 : 0;
+}
+
+y = 0;
+if (vrun == 1) {
+    s = vcur;
+    L = (s == 0) ? (ve0A - vs0A) : (ve0B - vs0B);
+    ks = (s == 0) ? vkA : vkB;
+    base = (s == 0) ? vs0A : vs0B;
+    exhausted = (vlp == 0 && ks >= L);      // the range is used up (reads the crossing sample after the end)
+    idx = (vlp == 1) ? base + (ks % L) : base + ks;
+    x = (s == 0) ? peek(srcA, idx, chA) : peek(srcB, idx, chB);
+
+    zc = (vhpv == 1) && ((vpv < 0 && x >= 0) || (vpv >= 0 && x < 0));
+    event = (zc == 1 || exhausted == 1);    // both are zero crossings of the output
+
+    if (play_on < 1 && event == 1) {
+        vrun = 0;                           // switched off: stop on this crossing, silent from here
+    } else {
+        z = vz;
+        cut = 0;
+        if (zc == 1) {
+            tz = (s == 0) ? a_zero_x : b_zero_x;     // the count is read only at a zero crossing
+            z += 1;
+            if (z >= tz) { cut = 1; }
+        }
+        if (exhausted == 1) { cut = 1; }
+
+        if (cut == 1) {
+            // is the other source finished?
+            od = 0;
+            if (s == 0) {
+                if (vokB == 0 || (vlp == 0 && vkB >= (ve0B - vs0B))) { od = 1; }
+            } else {
+                if (vokA == 0 || (vlp == 0 && vkA >= (ve0A - vs0A))) { od = 1; }
+            }
+
+            if (od == 1) {
+                if (exhausted == 1) {
+                    vrun = 0;               // both ranges are used up
+                } else {
+                    // the other source is finished: carry on with this one (the append)
+                    y = vpol * x;
+                    vpv = x;
+                    vhpv = 1;
+                    vz = 0;
+                    if (s == 0) { vkA = ks + 1; } else { vkB = ks + 1; }
+                }
+            } else {
+                // HAND OFF: the other source continues from where it stopped
+                nld = vpol * ((x >= 0) ? 1 : -1);    // direction the output is travelling through zero
+                o = 1 - s;
+                ko = (o == 0) ? vkA : vkB;
+                Lo = (o == 0) ? (ve0A - vs0A) : (ve0B - vs0B);
+                bo = (o == 0) ? vs0A : vs0B;
+                io = (vlp == 1) ? bo + (ko % Lo) : bo + ko;
+                xo = (o == 0) ? peek(srcA, io, chA) : peek(srcB, io, chB);
+                dO = (xo >= 0) ? 1 : -1;
+                vpol = nld * dO;            // flip the new chunk if it starts the wrong way
+                y = vpol * xo;
+                vpv = xo;
+                vhpv = 1;
+                vz = 0;
+                vcur = o;
+                if (o == 0) { vkA = ko + 1; } else { vkB = ko + 1; }
+            }
+        } else {
+            y = vpol * x;
+            vpv = x;
+            vhpv = 1;
+            vz = z;
+            if (s == 0) { vkA = ks + 1; } else { vkB = ks + 1; }
+        }
+    }
+}
+
+running = vrun;
+cur = vcur;
+pol = vpol;
+pv = vpv;
+hpv = vhpv;
+zcount = vz;
+kA = vkA;
+kB = vkB;
+lp = vlp;
+s0A = vs0A;
+e0A = ve0A;
+okA = vokA;
+s0B = vs0B;
+e0B = ve0B;
+okB = vokB;
+pplay = play_on;
+
+out1 = y;
