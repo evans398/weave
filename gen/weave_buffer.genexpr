@@ -1,7 +1,7 @@
-Param a_start(0, min=0);                    // selection start in buffer a, in samples (waveform~ 3rd outlet, unit samples)
-Param a_end(0, min=0);                      // selection end in buffer a, in samples (waveform~ 4th outlet)
-Param b_start(0, min=0);                    // selection start in buffer b
-Param b_end(0, min=0);                      // selection end in buffer b
+Param a_start(0, min=0);                    // selection start in buffer a, in ms (waveform~ 3rd outlet)
+Param a_end(0, min=0);                      // selection end in buffer a, in ms (waveform~ 4th outlet)
+Param b_start(0, min=0);                    // selection start in buffer b, in ms
+Param b_end(0, min=0);                      // selection end in buffer b, in ms
 Param a_zero_x(2, min=1, max=100);          // crossings A plays per turn (2 = one waveset)
 Param b_zero_x(2, min=1, max=100);          // crossings B plays per turn
 Param loop_on(0, min=0, max=1);             // 0 = one-shot, 1 = both ranges loop (read when play starts)
@@ -42,8 +42,8 @@ if (play_on >= 1 && pplay < 1) {
     vlp = loop_on;
     for (w = 0; w < 2; w += 1) {
         n = (w == 0) ? nA : nB;
-        sel1 = (w == 0) ? a_start : b_start;
-        sel2 = (w == 0) ? a_end : b_end;
+        sel1 = round(mstosamps((w == 0) ? a_start : b_start));   // ms to samples (assumes the file rate equals Max's)
+        sel2 = round(mstosamps((w == 0) ? a_end : b_end));
 
         // start: the nearest crossing (a tie keeps the earlier one)
         s = -1;
