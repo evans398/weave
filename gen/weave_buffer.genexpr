@@ -10,7 +10,8 @@ Param trig(0, min=0, max=1);                // with loop_on at 0: a change from 
 Buffer srcA("a");                           // a buffer~ named a
 Buffer srcB("b");                           // a buffer~ named b
 History running(0), ploop(0), ptrig(0), cur(0), pol(1), pv(0), hpv(0), zcount(0), kA(0), kB(0), lp(0);
-History s0A(0), e0A(0), okA(0), s0B(0), e0B(0), okB(0);   // snapped range of each source and whether it is usable
+History s0A(0), e0A(0), okA(0), s0B(0), e0B(0), okB(0);
+History pnA(0), pnB(0), offc(0);            // buffer lengths last seen, samples since loop_on went off   // snapped range of each source and whether it is usable
 
 SCAN = 100000;                              // how far (in samples) to look for a crossing when snapping
 
@@ -22,6 +23,8 @@ nB = dim(srcB);
 
 // work on local copies of the state, and write them back at the end
 vrun = running;
+voffc = offc;
+if (nA != pnA || nB != pnB) { vrun = 0; }   // a buffer was changed or reloaded: stop, so a stale range is never read
 vcur = cur;
 vpol = pol;
 vpv = pv;
@@ -119,6 +122,8 @@ if (vrun == 1) {
 
     zc = (vhpv == 1) && ((vpv < 0 && x >= 0) || (vpv >= 0 && x < 0));
     event = (zc == 1 || exhausted == 1);    // both are zero crossings of the output
+    if (vlp == 1 && loop_on < 1) { voffc += 1; } else { voffc = 0; }
+    if (voffc > 2000) { event = 1; }        // failsafe: no crossing within ~45 ms of switching off, stop anyway
 
     if (vlp == 1 && loop_on < 1 && event == 1) {
         vrun = 0;                           // loop switched off: stop on this crossing, silent from here
@@ -195,6 +200,9 @@ okA = vokA;
 s0B = vs0B;
 e0B = ve0B;
 okB = vokB;
+offc = voffc;
+pnA = nA;
+pnB = nB;
 ploop = loop_on;
 ptrig = trig;
 
