@@ -63,7 +63,7 @@ if (play_on >= 1 && pplay < 1) {
         }
 
         // end: the nearest crossing after the start that travels the same way as the start
-        e = -1;
+        endpt = -1;
         if (s >= 0) {
             xs = (w == 0) ? peek(srcA, s, chA) : peek(srcB, s, chB);
             d0 = (xs >= 0) ? 1 : -1;
@@ -73,26 +73,26 @@ if (play_on >= 1 && pplay < 1) {
                     xi = (w == 0) ? peek(srcA, i, chA) : peek(srcB, i, chB);
                     xp = (w == 0) ? peek(srcA, i - 1, chA) : peek(srcB, i - 1, chB);
                     di = (xi >= 0) ? 1 : -1;
-                    if (((xp < 0 && xi >= 0) || (xp >= 0 && xi < 0)) && di == d0) { e = i; break; }
+                    if (((xp < 0 && xi >= 0) || (xp >= 0 && xi < 0)) && di == d0) { endpt = i; break; }
                 }
                 i = sel2 + m;
                 if (m > 0 && i > s && i < n) {
                     xi = (w == 0) ? peek(srcA, i, chA) : peek(srcB, i, chB);
                     xp = (w == 0) ? peek(srcA, i - 1, chA) : peek(srcB, i - 1, chB);
                     di = (xi >= 0) ? 1 : -1;
-                    if (((xp < 0 && xi >= 0) || (xp >= 0 && xi < 0)) && di == d0) { e = i; break; }
+                    if (((xp < 0 && xi >= 0) || (xp >= 0 && xi < 0)) && di == d0) { endpt = i; break; }
                 }
             }
         }
 
         if (w == 0) {
             vs0A = s;
-            ve0A = e;
-            vokA = (s >= 0 && e >= 0) ? 1 : 0;
+            ve0A = endpt;
+            vokA = (s >= 0 && endpt >= 0) ? 1 : 0;
         } else {
             vs0B = s;
-            ve0B = e;
-            vokB = (s >= 0 && e >= 0) ? 1 : 0;
+            ve0B = endpt;
+            vokB = (s >= 0 && endpt >= 0) ? 1 : 0;
         }
     }
     vkA = 0;
