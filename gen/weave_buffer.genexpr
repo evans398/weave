@@ -6,6 +6,7 @@ Param a_zero_x(2, min=1, max=100);          // crossings A plays per turn (2 = o
 Param b_zero_x(2, min=1, max=100);          // crossings B plays per turn
 Param loop_on(0, min=0, max=1);             // 1 = both ranges loop until this goes back to 0 (stops at the next zero crossing)
 Param trig(0, min=0, max=1);                // with loop_on at 0: a change from 0 to 1 plays both ranges once
+Param lp_hz(20000, min=20, max=20000);      // low-pass on the output in Hz (12 dB/oct); 20000 = off
 
 Buffer srcA("a");                           // a buffer~ named a
 Buffer srcB("b");                           // a buffer~ named b
@@ -13,6 +14,7 @@ History running(0), ploop(0), ptrig(0), cur(0), pol(1), pv(0), hpv(0), zcount(0)
 History s0A(0), e0A(0), okA(0), s0B(0), e0B(0), okB(0);   // snapped range of each source and whether it is usable
 History pnA(0), pnB(0), offc(0);            // buffer lengths last seen, samples since loop_on went off
 History psA(0), peA(0), psB(0), peB(0);     // selections last seen
+History f1(0), f2(0);                       // low-pass filter state
 History pend(0), q0A(0), q1A(0), qokA(0), q0B(0), q1B(0), qokB(0);   // a changed selection, snapped, waiting for the next hand-off
 
 SCAN = 100000;                              // how far (in samples) to look for a crossing when snapping
@@ -250,4 +252,11 @@ pnB = nB;
 ploop = loop_on;
 ptrig = trig;
 
-out1 = y;
+// low-pass on the output: two one-pole stages (12 dB/oct), applied after the zero-crossing logic
+fa = 1 - exp(-twopi * min(lp_hz, 20000) / samplerate);
+fv1 = f1 + fa * (y - f1);
+fv2 = f2 + fa * (fv1 - f2);
+f1 = fv1;
+f2 = fv2;
+
+out1 = (lp_hz >= 20000) ? y : fv2;
