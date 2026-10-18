@@ -10,8 +10,10 @@ Param trig(0, min=0, max=1);                // with loop_on at 0: a change from 
 Buffer srcA("a");                           // a buffer~ named a
 Buffer srcB("b");                           // a buffer~ named b
 History running(0), ploop(0), ptrig(0), cur(0), pol(1), pv(0), hpv(0), zcount(0), kA(0), kB(0), lp(0);
-History s0A(0), e0A(0), okA(0), s0B(0), e0B(0), okB(0);
-History pnA(0), pnB(0), offc(0);            // buffer lengths last seen, samples since loop_on went off   // snapped range of each source and whether it is usable
+History s0A(0), e0A(0), okA(0), s0B(0), e0B(0), okB(0);   // snapped range of each source and whether it is usable
+History pnA(0), pnB(0), offc(0);            // buffer lengths last seen, samples since loop_on went off
+History psA(0), peA(0), psB(0), peB(0);     // selections last seen
+History pend(0), q0A(0), q1A(0), qokA(0), q0B(0), q1B(0), qokB(0);   // a changed selection, snapped, waiting for the next hand-off
 
 SCAN = 100000;                              // how far (in samples) to look for a crossing when snapping
 
@@ -39,13 +41,24 @@ vokA = okA;
 vs0B = s0B;
 ve0B = e0B;
 vokB = okB;
+vpend = pend;
+vq0A = q0A;
+vq1A = q1A;
+vqokA = qokA;
+vq0B = q0B;
+vq1B = q1B;
+vqokB = qokB;
 
 // ---- start: loop_on going to 1 starts the loop; trig going to 1 plays the one-shot (only while loop_on is 0)
 //      nothing starts while a run is still going. Both snap the ranges to zero crossings first.
+//      While a loop runs, moving a selection snaps the new range at once, and it takes over at the next hand-off.
 loopedge = (loop_on >= 1 && ploop < 1);
 trigedge = (trig >= 1 && ptrig < 1 && loop_on < 1);
-if (vrun == 0 && (loopedge == 1 || trigedge == 1)) {
-    vlp = (loopedge == 1) ? 1 : 0;
+startnow = (vrun == 0 && (loopedge == 1 || trigedge == 1));
+selchg = (a_start != psA || a_end != peA || b_start != psB || b_end != peB);
+resnap = (vrun == 1 && vlp == 1 && selchg == 1);
+if (startnow == 1 || resnap == 1) {
+    if (startnow == 1) { vlp = (loopedge == 1) ? 1 : 0; }
     for (w = 0; w < 2; w += 1) {
         n = (w == 0) ? nA : nB;
         sel1 = round(mstosamps((w == 0) ? a_start : b_start));   // ms to samples (assumes the file rate equals Max's)
@@ -92,22 +105,32 @@ if (vrun == 0 && (loopedge == 1 || trigedge == 1)) {
         }
 
         if (w == 0) {
-            vs0A = s;
-            ve0A = endpt;
-            vokA = (s >= 0 && endpt >= 0) ? 1 : 0;
+            vq0A = s;
+            vq1A = endpt;
+            vqokA = (s >= 0 && endpt >= 0) ? 1 : 0;
         } else {
-            vs0B = s;
-            ve0B = endpt;
-            vokB = (s >= 0 && endpt >= 0) ? 1 : 0;
+            vq0B = s;
+            vq1B = endpt;
+            vqokB = (s >= 0 && endpt >= 0) ? 1 : 0;
         }
     }
-    vkA = 0;
-    vkB = 0;
-    vz = 0;
-    vhpv = 0;
-    vpol = 1;
-    vcur = (vokA == 1) ? 0 : 1;             // A goes first when it has a usable range
-    vrun = (vokA == 1 || vokB == 1) ? 1 : 0;
+    vpend = 1;
+    if (startnow == 1) {
+        vs0A = vq0A;
+        ve0A = vq1A;
+        vokA = vqokA;
+        vs0B = vq0B;
+        ve0B = vq1B;
+        vokB = vqokB;
+        vpend = 0;
+        vkA = 0;
+        vkB = 0;
+        vz = 0;
+        vhpv = 0;
+        vpol = 1;
+        vcur = (vokA == 1) ? 0 : 1;         // A goes first when it has a usable range
+        vrun = (vokA == 1 || vokB == 1) ? 1 : 0;
+    }
 }
 
 y = 0;
@@ -138,6 +161,16 @@ if (vrun == 1) {
         if (exhausted == 1) { cut = 1; }
 
         if (cut == 1) {
+            // a moved selection takes over here (only if both new ranges are usable); both sources start their new range
+            if (vlp == 1 && vpend == 1 && vqokA == 1 && vqokB == 1) {
+                vs0A = vq0A;
+                ve0A = vq1A;
+                vs0B = vq0B;
+                ve0B = vq1B;
+                vkA = 0;
+                vkB = 0;
+                vpend = 0;
+            }
             // is the other source finished?
             od = 0;
             if (s == 0) {
@@ -201,6 +234,17 @@ s0B = vs0B;
 e0B = ve0B;
 okB = vokB;
 offc = voffc;
+pend = vpend;
+q0A = vq0A;
+q1A = vq1A;
+qokA = vqokA;
+q0B = vq0B;
+q1B = vq1B;
+qokB = vqokB;
+psA = a_start;
+peA = a_end;
+psB = b_start;
+peB = b_end;
 pnA = nA;
 pnB = nB;
 ploop = loop_on;
