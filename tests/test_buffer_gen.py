@@ -15,19 +15,22 @@ from buffer_model import render, sr  # noqa: E402
 SCAN = 100000
 
 
-def gen_port(xa, xb, a_start, a_end, b_start, b_end, zA, zB, loop_on, off_at, n_out):
-    """one channel of the gen~ code; xa, xb are the (already channel-picked) buffer contents"""
+def gen_port(xa, xb, a_start, a_end, b_start, b_end, zA, zB, loop_t, trig_t, n_out):
+    """one channel of the gen~ code; xa, xb are the (already channel-picked) buffer contents;
+    loop_t and trig_t are the loop_on and trig parameter values at every sample"""
     src = [xa, xb]
     nA, nB = len(xa), len(xb)
-    running = 0; pplay = 0; cur = 0; pol = 1.0; pv = 0.0; hpv = 0; zcount = 0; kA = 0; kB = 0; lp = 0
+    running = 0; ploop = 0; ptrig = 0; cur = 0; pol = 1.0; pv = 0.0; hpv = 0; zcount = 0; kA = 0; kB = 0; lp = 0
     s0A = e0A = okA = s0B = e0B = okB = 0
     out = np.zeros(n_out)
     for t in range(n_out):
-        play_on = 1 if (off_at is None or t < off_at) else 0
+        loop_on = loop_t[t]; trig = trig_t[t]
         vrun, vcur, vpol, vpv, vhpv, vz, vkA, vkB, vlp = running, cur, pol, pv, hpv, zcount, kA, kB, lp
         vs0A, ve0A, vokA, vs0B, ve0B, vokB = s0A, e0A, okA, s0B, e0B, okB
-        if play_on >= 1 and pplay < 1:
-            vlp = loop_on
+        loopedge = (loop_on >= 1 and ploop < 1)
+        trigedge = (trig >= 1 and ptrig < 1 and loop_on < 1)
+        if vrun == 0 and (loopedge or trigedge):
+            vlp = 1 if loopedge else 0
             for w in range(2):
                 n = nA if w == 0 else nB
                 sel1 = a_start if w == 0 else b_start
@@ -75,7 +78,7 @@ def gen_port(xa, xb, a_start, a_end, b_start, b_end, zA, zB, loop_on, off_at, n_
             x = src[s][idx]
             zc = (vhpv == 1) and ((vpv < 0 and x >= 0) or (vpv >= 0 and x < 0))
             event = (zc or exhausted)
-            if play_on < 1 and event:
+            if vlp == 1 and loop_on < 1 and event:
                 vrun = 0
             else:
                 z = vz
@@ -117,9 +120,22 @@ def gen_port(xa, xb, a_start, a_end, b_start, b_end, zA, zB, loop_on, off_at, n_
                     else: vkB = ks + 1
         running, cur, pol, pv, hpv, zcount, kA, kB, lp = vrun, vcur, vpol, vpv, vhpv, vz, vkA, vkB, vlp
         s0A, e0A, okA, s0B, e0B, okB = vs0A, ve0A, vokA, vs0B, ve0B, vokB
-        pplay = play_on
+        ploop = loop_on; ptrig = trig
         out[t] = y
     return out
+
+
+def _params(loop, off_at, n):
+    """parameter trajectories for one run started at sample 0: a loop run (loop_on up, optionally switched
+    off at off_at) or a one-shot (loop_on stays 0, trig goes up)"""
+    lt = np.zeros(n); tt = np.zeros(n)
+    if loop:
+        lt[:] = 1
+        if off_at is not None:
+            lt[off_at:] = 0
+    else:
+        tt[:] = 1
+    return lt, tt
 
 
 def _compare(a, b, sa, sb, zA, zB, loop, n_out, off_at):
@@ -130,7 +146,8 @@ def _compare(a, b, sa, sb, zA, zB, loop, n_out, off_at):
     for c in range(ref.shape[1]):
         xa = a if a.ndim == 1 else a[:, min(c, ca - 1)]
         xb = b if b.ndim == 1 else b[:, min(c, cb - 1)]
-        got = gen_port(xa, xb, sa[0], sa[1], sb[0], sb[1], zA, zB, 1 if loop else 0, off_at, len(ref))
+        lt, tt = _params(loop, off_at, len(ref))
+        got = gen_port(xa, xb, sa[0], sa[1], sb[0], sb[1], zA, zB, lt, tt, len(ref))
         assert np.array_equal(got, ref[:, c]), ("gen port differs from the model", c, int(np.argmax(got != ref[:, c])))
 
 
@@ -164,6 +181,56 @@ def test_port_silent_source():
     B = 0.5 * np.sin(2 * np.pi * 330 * T)
     _compare(np.full(sr, 0.2), B, (0, 3000), (1000, 20000), 2, 2, False, 30000, None)
     _compare(B, np.zeros(sr), (1000, 20000), (0, 3000), 2, 2, True, 30000, 12000)
+
+
+def _setup():
+    T = np.arange(2 * sr) / sr
+    A = 0.6 * np.sin(2 * np.pi * 220 * T)
+    B = 0.5 * np.sin(2 * np.pi * 330 * T + 1) + 0.2 * np.sin(2 * np.pi * 700 * T)
+    return A, B, (3000, 30000), (4000, 20000)
+
+
+def test_nothing_plays_without_a_trigger():
+    A, B, sa, sb = _setup()
+    n = 20000
+    z = np.zeros(n)
+    out = gen_port(A, B, sa[0], sa[1], sb[0], sb[1], 2, 2, z, z, n)
+    assert np.all(out == 0)                                  # loop off, no trigger: silence
+    out = gen_port(A, B, sa[0], sa[1], sb[0], sb[1], 2, 2, z, np.ones(n) * 0, n)
+    assert np.all(out == 0)
+
+
+def test_trigger_plays_once_and_can_be_repeated():
+    A, B, sa, sb = _setup()
+    ref, info = render(A, B, sa, sb, zA=2, zB=2, loop=False)
+    L = info[0]["length"]
+    n = 3 * L + 5000
+    lt = np.zeros(n); tt = np.zeros(n)
+    tt[10:20] = 1                                            # a trigger: 0 -> 1 -> 0
+    tt[L // 2:L // 2 + 5] = 1                                # a trigger while it is playing: ignored
+    second = L + 1500
+    tt[second:second + 5] = 1                                # a trigger after it has ended: plays again
+    out = gen_port(A, B, sa[0], sa[1], sb[0], sb[1], 2, 2, lt, tt, n)
+    assert np.array_equal(out[10:10 + L], ref[:L])
+    assert np.all(out[:10] == 0) and np.all(out[10 + L:second] == 0)
+    assert np.array_equal(out[second:second + L], ref[:L])
+    assert np.all(out[second + L:] == 0)
+
+
+def test_loop_on_starts_and_off_stops_and_trigger_is_ignored_while_looping():
+    A, B, sa, sb = _setup()
+    n = 40000
+    lt = np.zeros(n); tt = np.zeros(n)
+    lt[100:25000] = 1
+    tt[5000:5005] = 1                                        # a trigger while the loop is on: nothing extra
+    out = gen_port(A, B, sa[0], sa[1], sb[0], sb[1], 2, 2, lt, tt, n)
+    assert np.all(out[:100] == 0) and np.any(out[100:200] != 0)
+    nz = np.flatnonzero(out != 0)
+    stop = nz[-1] + 1
+    assert 25000 <= stop < 26500                             # stopped at the first crossing after loop_on went to 0
+    assert np.all(out[stop:] == 0)
+    ref, info = render(A, B, sa, sb, zA=2, zB=2, loop=True, n_out=n)
+    assert np.array_equal(out[100:stop], ref[:stop - 100])   # and up to then it is the same as the model
 
 
 if __name__ == "__main__":

@@ -134,22 +134,27 @@ def test_loop_wraps_seamlessly():
 
 
 def test_stop_waits_for_a_crossing():
-    for loop in (True, False):
-        for off in (7000, 12345, 20001):
-            out, info = render(A, B, (3000, 40000), (4000, 30000), zA=4, zB=4, loop=loop,
-                               n_out=50000, off_at=off)
-            inf = info[0]
-            m = inf["length"]
-            assert off <= m < off + 1000, (loop, off, m)
-            assert np.all(out[m:] == 0)
-            c = inf["chunks"][-1]
-            x = A if c["src"] == 0 else B
-            s0, e0 = inf["ra"] if c["src"] == 0 else inf["rb"]
-            L = e0 - s0
-            kk = c["k1"]
-            before = x[s0 + (kk - 1) % L]
-            after = x[s0 + kk % L] if loop else x[min(s0 + kk, len(x) - 1)]
-            assert (before < 0) != (after < 0)               # the stop is exactly on a crossing
+    for off in (7000, 12345, 20001):
+        out, info = render(A, B, (3000, 40000), (4000, 30000), zA=4, zB=4, loop=True,
+                           n_out=50000, off_at=off)
+        inf = info[0]
+        m = inf["length"]
+        assert off <= m < off + 1000, (off, m)
+        assert np.all(out[m:] == 0)
+        c = inf["chunks"][-1]
+        x = A if c["src"] == 0 else B
+        s0, e0 = inf["ra"] if c["src"] == 0 else inf["rb"]
+        L = e0 - s0
+        kk = c["k1"]
+        before = x[s0 + (kk - 1) % L]
+        after = x[s0 + kk % L]
+        assert (before < 0) != (after < 0)                   # the stop is exactly on a crossing
+
+
+def test_one_shot_ignores_the_stop_request():
+    full, i0 = render(A, B, (3000, 40000), (4000, 30000), zA=4, zB=4, loop=False)
+    cut, i1 = render(A, B, (3000, 40000), (4000, 30000), zA=4, zB=4, loop=False, off_at=9000)
+    assert np.array_equal(full, cut) and i0[0]["length"] == i1[0]["length"]
 
 
 def test_stereo_and_mono_channels():

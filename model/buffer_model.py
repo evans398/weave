@@ -8,9 +8,10 @@ Design (all decided with the user):
     crossing that travels in the same direction as the start (so the range holds an even number of crossings)
   - a chunk is zero_x crossings long; a source only advances while it plays (CDP-style)
   - at each join the polarity of the new chunk is chosen so the output keeps travelling through zero
-  - one-shot: each range plays once, what is left of the longer one is appended
-    loop: both ranges wrap until play goes off
-  - play off takes effect at the next zero crossing (the output goes silent there)
+  - one-shot (loop off): a trigger plays each range once, what is left of the longer one is appended;
+    it ends by itself and is not stopped by anything else
+  - loop (loop on): both ranges wrap until loop goes off; that takes effect at the next zero crossing
+    (the output goes silent there)
 
 A "crossing at index i" means the sign changes between samples i-1 and i; sample i is the first
 sample after the crossing.  A chunk starts on such a sample.
@@ -80,7 +81,7 @@ def _channel(xa, xb, ra, rb, zA, zB, loop, n_out, off_at, changes):
         x = get(s, ks)                                     # when exhausted this is x[e0], the sample after the end
         zc = (pv is not None) and ((pv < 0) != (x < 0))
         event = zc or exhausted                            # both are zero crossings of the output
-        if (not play) and event:
+        if loop and (not play) and event:                 # only a loop run is stopped by switching it off
             length = n
             break
         z = zcount
