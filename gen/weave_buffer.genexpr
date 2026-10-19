@@ -6,13 +6,17 @@ Param a_zero_x(2, min=1, max=100);          // crossings A plays per turn (2 = o
 Param b_zero_x(2, min=1, max=100);          // crossings B plays per turn
 Param loop_on(0, min=0, max=1);             // 1 = both ranges loop until this goes back to 0 (stops at the next zero crossing)
 Param trig(0, min=0, max=1);                // with loop_on at 0: a change from 0 to 1 plays both ranges once
+Param smooth_ms(0, min=0, max=3);           // local smoothing around each A/B join, in ms (0 = off); delays the output by this much
 
+Data rb(512);                               // the spliced signal, last 512 samples
+Data jb(512);                               // 1 where a hand-off happened
 Buffer srcA("a");                           // a buffer~ named a
 Buffer srcB("b");                           // a buffer~ named b
 History running(0), ploop(0), ptrig(0), cur(0), pol(1), pv(0), hpv(0), zcount(0), kA(0), kB(0), lp(0);
 History s0A(0), e0A(0), okA(0), s0B(0), e0B(0), okB(0);   // snapped range of each source and whether it is usable
 History pnA(0), pnB(0), offc(0);            // buffer lengths last seen, samples since loop_on went off
 History psA(0), peA(0), psB(0), peB(0);     // selections last seen
+History wp(0), dly(0);                      // smoothing: write position, delay in samples (set when a run starts)
 History pend(0), q0A(0), q1A(0), qokA(0), q0B(0), q1B(0), qokB(0);   // a changed selection, snapped, waiting for the next hand-off
 
 SCAN = 100000;                              // how far (in samples) to look for a crossing when snapping
@@ -42,6 +46,7 @@ vs0B = s0B;
 ve0B = e0B;
 vokB = okB;
 vpend = pend;
+vD = dly;
 vq0A = q0A;
 vq1A = q1A;
 vqokA = qokA;
@@ -129,11 +134,13 @@ if (startnow == 1 || resnap == 1) {
         vhpv = 0;
         vpol = 1;
         vcur = (vokA == 1) ? 0 : 1;         // A goes first when it has a usable range
+        vD = min(floor(mstosamps(smooth_ms)), 128);   // read only when a run starts
         vrun = (vokA == 1 || vokB == 1) ? 1 : 0;
     }
 }
 
 y = 0;
+joined = 0;
 if (vrun == 1) {
     s = vcur;
     L = (s == 0) ? (ve0A - vs0A) : (ve0B - vs0B);
@@ -206,6 +213,7 @@ if (vrun == 1) {
                 vhpv = 1;
                 vz = 0;
                 vcur = o;
+                joined = 1;
                 if (o == 0) { vkA = ko + 1; } else { vkB = ko + 1; }
             }
         } else {
@@ -217,6 +225,25 @@ if (vrun == 1) {
         }
     }
 }
+
+// ---- local smoothing at the joins: the output is delayed by vD samples, and around each join the signal is
+//      averaged over a window that is widest at the join and shrinks to nothing vD samples away from it.
+poke(rb, y, wp);
+poke(jb, joined, wp);
+ys = y;
+if (vD > 0) {
+    sidx = (wp - vD + 512) % 512;           // the sample being output now
+    dn = vD;                                // distance to the nearest join (vD = none close enough)
+    for (d = 0; d < vD; d += 1) {
+        if (peek(jb, (sidx + d) % 512) > 0 || peek(jb, (sidx - d + 512) % 512) > 0) { dn = d; break; }
+    }
+    hh = vD - dn;                           // half-width of the averaging window
+    acc = 0;
+    for (kk = -hh; kk <= hh; kk += 1) { acc += peek(rb, (sidx + kk + 512) % 512); }
+    ys = acc / (2 * hh + 1);
+}
+wp = (wp + 1) % 512;
+dly = vD;
 
 running = vrun;
 cur = vcur;
@@ -250,4 +277,4 @@ pnB = nB;
 ploop = loop_on;
 ptrig = trig;
 
-out1 = y;
+out1 = ys;

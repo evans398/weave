@@ -15,7 +15,7 @@ from buffer_model import render, sr  # noqa: E402
 SCAN = 100000
 
 
-def gen_port(xa, xb, a_start, a_end, b_start, b_end, zA, zB, loop_t, trig_t, n_out):
+def gen_port(xa, xb, a_start, a_end, b_start, b_end, zA, zB, loop_t, trig_t, n_out, D=0):
     """one channel of the gen~ code; xa, xb are the (already channel-picked) buffer contents;
     loop_t and trig_t are the loop_on and trig parameter values at every sample"""
     src = [xa, xb]
@@ -24,11 +24,13 @@ def gen_port(xa, xb, a_start, a_end, b_start, b_end, zA, zB, loop_t, trig_t, n_o
     s0A = e0A = okA = s0B = e0B = okB = 0
     psA = peA = psB = peB = 0
     pend = 0; q0A = q1A = qokA = q0B = q1B = qokB = 0
+    rb = [0.0] * 512; jb = [0] * 512; wp = 0; dly = 0
     a_start, a_end, b_start, b_end = [np.broadcast_to(np.asarray(v), (n_out,)) for v in (a_start, a_end, b_start, b_end)]
     out = np.zeros(n_out)
     for t in range(n_out):
         loop_on = loop_t[t]; trig = trig_t[t]
         vpend, vq0A, vq1A, vqokA, vq0B, vq1B, vqokB = pend, q0A, q1A, qokA, q0B, q1B, qokB
+        vD = dly
         vrun, vcur, vpol, vpv, vhpv, vz, vkA, vkB, vlp = running, cur, pol, pv, hpv, zcount, kA, kB, lp
         vs0A, ve0A, vokA, vs0B, ve0B, vokB = s0A, e0A, okA, s0B, e0B, okB
         loopedge = (loop_on >= 1 and ploop < 1)
@@ -79,7 +81,9 @@ def gen_port(xa, xb, a_start, a_end, b_start, b_end, zA, zB, loop_t, trig_t, n_o
                 vkA = 0; vkB = 0; vz = 0; vhpv = 0; vpol = 1
                 vcur = 0 if vokA == 1 else 1
                 vrun = 1 if (vokA == 1 or vokB == 1) else 0
+                vD = min(D, 128)
         y = 0.0
+        joined = 0
         if vrun == 1:
             s = vcur
             L = (ve0A - vs0A) if s == 0 else (ve0B - vs0B)
@@ -127,18 +131,35 @@ def gen_port(xa, xb, a_start, a_end, b_start, b_end, zA, zB, loop_t, trig_t, n_o
                         dO = 1 if xo >= 0 else -1
                         vpol = nld * dO
                         y = vpol * xo; vpv = xo; vhpv = 1; vz = 0; vcur = o
+                        joined = 1
                         if o == 0: vkA = ko + 1
                         else: vkB = ko + 1
                 else:
                     y = vpol * x; vpv = x; vhpv = 1; vz = z
                     if s == 0: vkA = ks + 1
                     else: vkB = ks + 1
+        rb[wp] = y; jb[wp] = joined
+        ys = y
+        if vD > 0:
+            sidx = (wp - vD + 512) % 512
+            dn = vD
+            for d in range(vD):
+                if jb[(sidx + d) % 512] > 0 or jb[(sidx - d + 512) % 512] > 0:
+                    dn = d
+                    break
+            hh = vD - dn
+            acc = 0.0
+            for kk in range(-hh, hh + 1):
+                acc += rb[(sidx + kk + 512) % 512]
+            ys = acc / (2 * hh + 1)
+        wp = (wp + 1) % 512
+        dly = vD
         running, cur, pol, pv, hpv, zcount, kA, kB, lp = vrun, vcur, vpol, vpv, vhpv, vz, vkA, vkB, vlp
         s0A, e0A, okA, s0B, e0B, okB = vs0A, ve0A, vokA, vs0B, ve0B, vokB
         ploop = loop_on; ptrig = trig
         pend, q0A, q1A, qokA, q0B, q1B, qokB = vpend, vq0A, vq1A, vqokA, vq0B, vq1B, vqokB
         psA, peA, psB, peB = a_start[t], a_end[t], b_start[t], b_end[t]
-        out[t] = y
+        out[t] = ys
     return out
 
 
@@ -270,6 +291,51 @@ def test_moving_a_selection_while_looping_takes_over_at_the_next_hand_off():
     old_only = set(np.abs(A[3000:30000]).tolist()) - aset
     assert not any(abs(v) in old_only for v in tail)                           # the old A range is gone
     assert np.max(np.abs(np.diff(out))) <= 1.5 * np.max(np.abs(np.diff(old)))   # the takeover join is no rougher than the others
+
+
+def test_smoothing_off_is_unchanged_and_port_matches_model_with_smoothing():
+    A, B, sa, sb = _setup()
+    for loop, off in [(False, None), (True, None), (True, 12000)]:
+        for D in (0, 7, 44):
+            n = 40000
+            ref, _ = render(A, B, sa, sb, zA=2, zB=3, loop=loop, n_out=n, off_at=off, smooth=D)
+            lt, tt = _params(loop, off, n)
+            got = gen_port(A, B, sa[0], sa[1], sb[0], sb[1], 2, 3, lt, tt, n, D=D)
+            assert np.array_equal(got, ref), (loop, off, D, int(np.argmax(got != ref)))
+    raw, _ = render(A, B, sa, sb, zA=2, zB=3, loop=True, n_out=40000)
+    z, _ = render(A, B, sa, sb, zA=2, zB=3, loop=True, n_out=40000, smooth=0)
+    assert np.array_equal(raw, z)
+
+
+def test_smoothing_only_touches_the_joins_and_rounds_the_corner():
+    A, B, sa, sb = _setup()
+    n = 40000; D = 40
+    raw, info = render(A, B, sa, sb, zA=2, zB=2, loop=True, n_out=n)
+    sm, _ = render(A, B, sa, sb, zA=2, zB=2, loop=True, n_out=n, smooth=D)
+    joins = [c['n0'] for c in info[0]['chunks'][1:]]
+    far = np.ones(n, bool)
+    for j in joins:
+        far[max(0, j - D):j + D + 1] = False
+    idx = np.flatnonzero(far)
+    idx = idx[(idx >= D) & (idx < n - D)]
+    assert np.array_equal(sm[idx + D], raw[idx])            # away from the joins: the same signal, delayed by D
+    def corner(x, i):                                       # the change of slope at index i
+        return abs((x[i] - x[i - 1]) - (x[i - 1] - x[i - 2]))
+    js = [j for j in joins if 2 <= j < n - D - 2]
+    before = np.mean([corner(raw, j) for j in js])
+    after = np.mean([corner(sm, j + D) for j in js])
+    assert after < 0.5 * before, (before, after)            # the corner is rounded off
+
+
+def test_smoothing_delays_the_stop_by_the_window():
+    A, B, sa, sb = _setup()
+    n = 40000; D = 30
+    lt = np.zeros(n); tt = np.zeros(n); lt[100:25000] = 1
+    a = gen_port(A, B, sa[0], sa[1], sb[0], sb[1], 2, 2, lt, tt, n, D=0)
+    b = gen_port(A, B, sa[0], sa[1], sb[0], sb[1], 2, 2, lt, tt, n, D=D)
+    sa_stop = np.flatnonzero(a != 0)[-1] + 1
+    sb_stop = np.flatnonzero(b != 0)[-1] + 1
+    assert sb_stop - sa_stop <= D + 1 and sb_stop >= sa_stop
 
 
 if __name__ == "__main__":

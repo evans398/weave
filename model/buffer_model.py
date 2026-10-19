@@ -119,8 +119,32 @@ def _channel(xa, xb, ra, rb, zA, zB, loop, n_out, off_at, changes):
     return out, chunks, length
 
 
-def render(a, b, sel_a, sel_b, zA=2, zB=2, loop=False, n_out=None, off_at=None, changes=()):
+def smooth_stream(r, joins, D):
+    """local smoothing at the joins: the output is r delayed by D samples; around each join (index = the first
+    sample of the new chunk) it is the mean of r over a window of half-width D - distance_to_nearest_join,
+    which is D at the join and 0 at distance D or more."""
+    n = len(r)
+    J = set(joins)
+    out = np.zeros(n)
+    for t in range(n):
+        idx = t - D
+        dn = D
+        for d in range(D):
+            if (idx + d) in J or (idx - d) in J:
+                dn = d
+                break
+        h = D - dn
+        acc = 0.0
+        for k in range(-h, h + 1):
+            i = idx + k
+            acc += r[i] if 0 <= i < n else 0.0
+        out[t] = acc / (2 * h + 1)
+    return out
+
+
+def render(a, b, sel_a, sel_b, zA=2, zB=2, loop=False, n_out=None, off_at=None, changes=(), smooth=0):
     """a, b: (n,) mono or (n, 2) stereo float arrays; sel_*: (start, end) in samples.
+    smooth: local smoothing at the joins, in samples (0 = off); the output is then delayed by that many samples.
     returns (out, info) with out of shape (n,) or (n, channels)."""
     a = np.asarray(a, float); b = np.asarray(b, float)
     ca = 1 if a.ndim == 1 else a.shape[1]
@@ -135,6 +159,9 @@ def render(a, b, sel_a, sel_b, zA=2, zB=2, loop=False, n_out=None, off_at=None, 
         ra = snap(xa, *sel_a)
         rb = snap(xb, *sel_b)
         o, chunks, length = _channel(xa, xb, ra, rb, zA, zB, loop, n_out, off_at, changes)
+        if smooth > 0:
+            o = smooth_stream(o, [c['n0'] for c in chunks[1:]], smooth)
+            length = min(n_out, length + smooth)
         outs.append(o)
         info.append(dict(ra=ra, rb=rb, chunks=chunks, length=length))
     out = np.stack(outs, axis=1)
